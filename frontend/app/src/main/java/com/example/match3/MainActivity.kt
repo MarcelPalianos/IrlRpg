@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
         showHome()
     }
 
+    private var currentPvpGameId: String? = null
     private fun showHome() {
         val layout = screenLayout()
         layout.addView(title("Match3 Battle"))
@@ -81,9 +82,13 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setBackgroundColor(Color.parseColor("#55000000"))
         }
-
         controls.addView(
-            smallButton("Back to Lobby") {
+            button("Test PvP Move") {
+                makePvpMove()
+            }
+        )
+        controls.addView(
+            button("Back to Lobby") {
                 showLobby()
             }
         )
@@ -139,6 +144,9 @@ class MainActivity : AppCompatActivity() {
                 connection.disconnect()
 
                 val json = org.json.JSONObject(response)
+                val gameId = json.getString("gameId")
+                currentPvpGameId = gameId
+
                 val playerHp = json.getJSONObject("player").getInt("hp")
                 val enemyHp = json.getJSONObject("enemy").getInt("hp")
                 val turnString = json.getString("turn")
@@ -156,6 +164,86 @@ class MainActivity : AppCompatActivity() {
                 android.util.Log.e("START_GAME", "Failed to start game from backend", e)
             }
         }.start()
+    }
+
+    private fun makePvpMove() {
+        val gameId = currentPvpGameId ?: return
+
+        Thread {
+            try {
+                val url = java.net.URL("http://10.0.2.2:3000/make-move")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+
+                val body = """{"gameId":"$gameId"}"""
+                connection.outputStream.use { output ->
+                    output.write(body.toByteArray())
+                }
+
+                val responseCode = connection.responseCode
+                val response = if (responseCode in 200..299) {
+                    connection.inputStream.bufferedReader().readText()
+                } else {
+                    connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                }
+                android.util.Log.d("PVP_MOVE", "Code=$responseCode Body=$response")
+
+                val json = org.json.JSONObject(response)
+                val playerHp = json.getInt("playerHp")
+                val enemyHp = json.getInt("enemyHp")
+                val playerDamage = json.getInt("playerDamage")
+                val enemyDamage = json.getInt("enemyDamage")
+                val turnString = json.getString("turn")
+                val battleOver = json.getBoolean("battleOver")
+                val winner = if (json.isNull("winner")) null else json.getString("winner")
+                runOnUiThread {
+                    if (battleOver) {
+                        showPvpBattleFinished(playerHp, enemyHp, winner)
+                    } else {
+                        showPvpMoveResult(playerHp, enemyHp, playerDamage, enemyDamage, turnString)
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PVP_MOVE", "Failed to make PvP move", e)
+            }
+        }.start()
+    }
+
+    private fun showPvpMoveResult(playerHp: Int, enemyHp: Int, playerDamage: Int, enemyDamage: Int, turn: String) {
+        val layout = screenLayout()
+        layout.addView(title("PvP Move Result"))
+        layout.addView(stat("Player HP", playerHp.toString()))
+        layout.addView(stat("Enemy HP", enemyHp.toString()))
+        layout.addView(stat("You dealt", playerDamage.toString()))
+        layout.addView(stat("Enemy dealt", enemyDamage.toString()))
+        layout.addView(stat("Next turn", turn))
+        layout.addView(spacer(16))
+        layout.addView(button("Make Another PvP Move") { makePvpMove() })
+        layout.addView(button("Back to Lobby") { showLobby() })
+        setScreen(layout)
+    }
+    private fun showPvpBattleFinished(playerHp: Int, enemyHp: Int, winner: String?) {
+        val layout = screenLayout()
+        layout.addView(title("PvP Battle Finished"))
+
+        val resultText = when (winner) {
+            "player" -> "You won!"
+            "enemy" -> "You lost!"
+            else -> "Battle ended"
+        }
+
+        layout.addView(subtitle(resultText))
+        layout.addView(spacer(12))
+        layout.addView(stat("Player HP", playerHp.toString()))
+        layout.addView(stat("Enemy HP", enemyHp.toString()))
+        layout.addView(spacer(16))
+        layout.addView(button("Back to Lobby") { showLobby() })
+
+        setScreen(layout)
     }
     private fun startBattle() {
         val container = FrameLayout(this).apply {

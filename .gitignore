@@ -1,20 +1,19 @@
-# Node backend
-backend/node_modules/
-backend/.env
+# Node
+backend/node_modules
+backend/package-lock.json
 
 # Android / Gradle
-frontend/.gradle/
-frontend/caches/
-frontend/daemon/
-frontend/kotlin-profile/
-frontend/wrapper/dists/
+frontend/.gradle
+frontend/build
+frontend/caches
+frontend/daemon
+frontend/wrapper/dists
 frontend/local.properties
-frontend/**/build/
-
-# IDE
-frontend/.idea/
-*.iml
 
 # OS
-Thumbs.db
 .DS_Store
+Thumbs.db
+
+# IDE
+.idea
+.vscode
