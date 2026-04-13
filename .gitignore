@@ -1,0 +1,20 @@
+# Node backend
+backend/node_modules/
+backend/.env
+
+# Android / Gradle
+frontend/.gradle/
+frontend/caches/
+frontend/daemon/
+frontend/kotlin-profile/
+frontend/wrapper/dists/
+frontend/local.properties
+frontend/**/build/
+
+# IDE
+frontend/.idea/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
