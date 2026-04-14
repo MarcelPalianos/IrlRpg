@@ -24,6 +24,11 @@ class GameView @JvmOverloads constructor(
         val score: Int,
         val playerLevel: Int
     )
+    data class MoveResult(
+        val matches: Int,
+        val cascade: Int,
+        val colors: List<String>
+    )
 
     interface BattleListener {
         fun onBattleEnded(summary: BattleSummary)
@@ -179,6 +184,15 @@ class GameView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 4f
     }
+    private var lastMoveResult = MoveResult(
+        matches = 3,
+        cascade = 1,
+        colors = listOf("red")
+    )
+
+    private var currentTurnMatchedGems = 0
+    private var currentTurnCascadeCount = 0
+    private val currentTurnColors = mutableListOf<String>()
 
     init {
         val size = engine.size()
@@ -235,6 +249,7 @@ class GameView @JvmOverloads constructor(
             invalidate()
             return true
         }
+        resetTurnTracking()
         pendingClearDamages.clear()
         result.clearCounts.forEachIndexed { index, count ->
             pendingClearDamages += DamageTick(
@@ -251,12 +266,26 @@ class GameView @JvmOverloads constructor(
             onSequenceFinished = {
                 if (battleOver) return@playNextStep
                 if (pendingLevelComplete) {
-                    startNextLevel()
+                    finalizeTurnTracking()
+                    if (!isPvpMode) {
+                        startNextLevel()
+                    } else {
+                        statusText = "Move ready to send"
+                        invalidate()
+                    }
                     return@playNextStep
                 }
-                turn = Turn.AI
-                statusText = "AI is thinking..."
-                postDelayed({ runAiTurn() }, 700L)
+
+                finalizeTurnTracking()
+
+                if (isPvpMode) {
+                    statusText = "Move ready to send"
+                    invalidate()
+                } else {
+                    turn = Turn.AI
+                    statusText = "AI is thinking..."
+                    postDelayed({ runAiTurn() }, 700L)
+                }
             }
         )
         return true
@@ -297,6 +326,43 @@ class GameView @JvmOverloads constructor(
         engine.resetUntilMoveExists(rules = playerRules())
         displayBoard = engine.snapshotBoard()
         invalidate()
+    }
+
+    fun getLastMoveResult(): MoveResult {
+        return lastMoveResult
+    }
+
+    private fun resetTurnTracking() {
+        currentTurnMatchedGems = 0
+        currentTurnCascadeCount = 0
+        currentTurnColors.clear()
+    }
+
+    private fun colorName(color: Int): String {
+        return when (color) {
+            1 -> "red"
+            2 -> "yellow"
+            3 -> "green"
+            4 -> "blue"
+            5 -> "purple"
+            else -> "unknown"
+        }
+    }
+
+    private fun finalizeTurnTracking() {
+        val safeMatches = currentTurnMatchedGems.coerceAtLeast(3)
+        val safeCascade = currentTurnCascadeCount.coerceAtLeast(1)
+        val safeColors = if (currentTurnColors.isEmpty()) {
+            listOf("red")
+        } else {
+            currentTurnColors.distinct()
+        }
+
+        lastMoveResult = MoveResult(
+            matches = safeMatches,
+            cascade = safeCascade,
+            colors = safeColors
+        )
     }
 
     fun setBattleListener(listener: BattleListener?) {
@@ -796,6 +862,9 @@ class GameView @JvmOverloads constructor(
         triggerColorBombFlash(step.cells)
         val tick = pendingClearDamages.pollFirst() ?: return
         val clearColor = dominantClearColor(step.cells)
+        currentTurnMatchedGems += step.cells.size
+        currentTurnCascadeCount += 1
+        currentTurnColors += colorName(clearColor)
         var damage = scaleDamageByElements(tick.amount, clearColor)
         val comboText = if (tick.comboIndex > 0) " x${tick.comboIndex + 1}" else ""
         when (damageTargetSide) {
@@ -1274,6 +1343,12 @@ class GameView @JvmOverloads constructor(
             Side.AI -> (baseDamage + offenseBonus + petOffense).coerceAtLeast(1)
             Side.PLAYER -> (baseDamage - defenseReduce - petDefense).coerceAtLeast(1)
         }
+    }
+
+    fun setOnlineTurn(isMyTurn: Boolean) {
+        turn = if (isMyTurn) Turn.PLAYER else Turn.AI
+        statusText = if (isMyTurn) "Your turn" else "Opponent's turn"
+        invalidate()
     }
 
     private fun baseColor(value: Int): Int {

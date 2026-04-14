@@ -28,6 +28,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var currentPvpGameId: String? = null
+    private var currentPvpPlayer: String? = null
+    private var currentPvpStatusText: TextView? = null
+    private var currentPvpPlayerHpText: TextView? = null
+    private var currentPvpEnemyHpText: TextView? = null
+    private var currentPvpTurnText: TextView? = null
+    private var currentOnlineGameView: GameView? = null
+
     private fun showHome() {
         val layout = screenLayout()
         layout.addView(title("Match3 Battle"))
@@ -51,22 +58,68 @@ class MainActivity : AppCompatActivity() {
         layout.addView(button("Back Home") { showHome() })
         setScreen(layout)
     }
-    private fun startPvpBattle(playerHp: Int, enemyHp: Int, turn: GameView.Turn) {
+
+    private fun showStats() {
+        val progress = ProgressStore.load(this)
+        showStatsEditor(
+            base = progress,
+            hpDelta = 0,
+            offenseDelta = IntArray(6),
+            defenseDelta = IntArray(6),
+            remaining = progress.unspentPoints
+        )
+    }
+
+    private fun startPvpBattleFromBackend() {
+        Thread {
+            try {
+                val url = java.net.URL("http://10.0.2.2:3000/matchmaking/join")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+
+                connection.outputStream.use { output ->
+                    output.write("{}".toByteArray())
+                }
+
+                val response = connection.inputStream.bufferedReader().readText()
+                android.util.Log.d("MATCH_JOIN", response)
+                connection.disconnect()
+
+                val json = org.json.JSONObject(response)
+                currentPvpGameId = json.getString("gameId")
+                currentPvpPlayer = json.getString("player")
+                val gameStatus = json.getString("gameStatus")
+
+                runOnUiThread {
+                    showOnlinePvpScreen(
+                        gameId = currentPvpGameId ?: "",
+                        player = currentPvpPlayer ?: "",
+                        gameStatus = gameStatus
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MATCH_JOIN", "Failed to join match", e)
+            }
+        }.start()
+    }
+
+    private fun showOnlinePvpScreen(gameId: String, player: String, gameStatus: String) {
         val container = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#121220"))
         }
 
         val gameView = GameView(this)
+        currentOnlineGameView = gameView
 
-        gameView.setInitialState(playerHp, enemyHp, turn)
-
-        gameView.setBattleListener(object : GameView.BattleListener {
-            override fun onBattleEnded(summary: GameView.BattleSummary) {
-                runOnUiThread {
-                    showPvpBattleResult(summary)
-                }
-            }
-        })
+        gameView.setInitialState(
+            playerHp = 100,
+            enemyHp = 100,
+            turn = if (player == "player1") GameView.Turn.PLAYER else GameView.Turn.AI
+        )
 
         container.addView(
             gameView,
@@ -80,15 +133,38 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 24)
             gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#55000000"))
+            setBackgroundColor(Color.parseColor("#77000000"))
         }
+
+        controls.addView(title("Online PvP"))
+        controls.addView(stat("Game ID", gameId))
+        controls.addView(stat("You are", player))
+
+        currentPvpStatusText = stat("Status", gameStatus)
+        currentPvpPlayerHpText = stat("Your HP", "-")
+        currentPvpEnemyHpText = stat("Enemy HP", "-")
+        currentPvpTurnText = stat("Turn", "-")
+
+        controls.addView(currentPvpStatusText)
+        controls.addView(currentPvpPlayerHpText)
+        controls.addView(currentPvpEnemyHpText)
+        controls.addView(currentPvpTurnText)
+
         controls.addView(
-            button("Test PvP Move") {
+            button("Refresh State") {
+                fetchPvpGameState()
+            }
+        )
+
+        controls.addView(
+            button("Send Last Board Move") {
                 makePvpMove()
             }
         )
+
         controls.addView(
             button("Back to Lobby") {
+                currentOnlineGameView = null
                 showLobby()
             }
         )
@@ -103,71 +179,60 @@ class MainActivity : AppCompatActivity() {
         )
 
         setScreen(container)
+        fetchPvpGameState()
     }
-    private fun showStats() {
-        val progress = ProgressStore.load(this)
-        showStatsEditor(
-            base = progress,
-            hpDelta = 0,
-            offenseDelta = IntArray(6),
-            defenseDelta = IntArray(6),
-            remaining = progress.unspentPoints
-        )
-    }
-    private fun showPvpBattleResult(summary: GameView.BattleSummary) {
-        val layout = screenLayout()
-        layout.addView(title("PvP Battle Ended"))
-        layout.addView(stat("Enemy level reached", summary.reachedEnemyLevel.toString()))
-        layout.addView(stat("Score", summary.score.toString()))
-        layout.addView(stat("Player level", summary.playerLevel.toString()))
-        layout.addView(spacer(16))
-        layout.addView(button("Back to Lobby") { showLobby() })
-        setScreen(layout)
-    }
-    private fun startPvpBattleFromBackend() {
+
+    private fun fetchPvpGameState() {
+        val gameId = currentPvpGameId ?: return
+        val player = currentPvpPlayer ?: return
+
         Thread {
             try {
-                val url = java.net.URL("http://10.0.2.2:3000/start-game")
+                val url = java.net.URL("http://10.0.2.2:3000/game-state/$gameId")
                 val connection = url.openConnection() as java.net.HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
+                connection.requestMethod = "GET"
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
 
-                connection.outputStream.use { output ->
-                    output.write("{}".toByteArray())
-                }
-
                 val response = connection.inputStream.bufferedReader().readText()
-                android.util.Log.d("START_GAME", response)
+                android.util.Log.d("GAME_STATE", response)
                 connection.disconnect()
 
                 val json = org.json.JSONObject(response)
-                val gameId = json.getString("gameId")
-                currentPvpGameId = gameId
+                val status = json.getString("status")
+                val turn = json.getString("turn")
+                val battleOver = json.getBoolean("battleOver")
+                val winner = if (json.isNull("winner")) null else json.getString("winner")
 
-                val playerHp = json.getJSONObject("player").getInt("hp")
-                val enemyHp = json.getJSONObject("enemy").getInt("hp")
-                val turnString = json.getString("turn")
+                val player1Hp = json.getJSONObject("player1").getInt("hp")
+                val player2Hp = json.getJSONObject("player2").getInt("hp")
 
-                val turn = if (turnString == "player") {
-                    GameView.Turn.PLAYER
-                } else {
-                    GameView.Turn.AI
-                }
+                val myHp = if (player == "player1") player1Hp else player2Hp
+                val enemyHp = if (player == "player1") player2Hp else player1Hp
+
+                val isMyTurn = turn == player
 
                 runOnUiThread {
-                    startPvpBattle(playerHp, enemyHp, turn)
+                    currentPvpStatusText?.text = "Status: $status"
+                    currentPvpPlayerHpText?.text = "Your HP: $myHp"
+                    currentPvpEnemyHpText?.text = "Enemy HP: $enemyHp"
+                    currentPvpTurnText?.text = "Turn: $turn"
+
+                    currentOnlineGameView?.setOnlineTurn(isMyTurn)
+
+                    if (battleOver) {
+                        showOnlinePvpBattleFinished(myHp, enemyHp, winner)
+                    }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("START_GAME", "Failed to start game from backend", e)
+                android.util.Log.e("GAME_STATE", "Failed to fetch game state", e)
             }
         }.start()
     }
 
     private fun makePvpMove() {
         val gameId = currentPvpGameId ?: return
+        val player = currentPvpPlayer ?: return
 
         Thread {
             try {
@@ -179,7 +244,21 @@ class MainActivity : AppCompatActivity() {
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
 
-                val body = """{"gameId":"$gameId"}"""
+                val move = currentOnlineGameView?.getLastMoveResult()
+
+                val matches = move?.matches ?: 3
+                val cascade = move?.cascade ?: 1
+                val colorsJson = move?.colors?.joinToString(",") { "\"$it\"" } ?: "\"red\""
+
+                val body = """{
+                    "gameId":"$gameId",
+                    "player":"$player",
+                    "move":{
+                        "matches":$matches,
+                        "cascade":$cascade,
+                        "colors":[$colorsJson]
+                    }
+                }"""
                 connection.outputStream.use { output ->
                     output.write(body.toByteArray())
                 }
@@ -190,21 +269,40 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
                 }
+
                 android.util.Log.d("PVP_MOVE", "Code=$responseCode Body=$response")
+                connection.disconnect()
 
                 val json = org.json.JSONObject(response)
-                val playerHp = json.getInt("playerHp")
-                val enemyHp = json.getInt("enemyHp")
-                val playerDamage = json.getInt("playerDamage")
-                val enemyDamage = json.getInt("enemyDamage")
-                val turnString = json.getString("turn")
+
+                if (responseCode !in 200..299) {
+                    val error = json.optString("error", "Unknown error")
+                    runOnUiThread {
+                        currentPvpStatusText?.text = "Status: $error"
+                    }
+                    return@Thread
+                }
+
+                val player1Hp = json.getInt("player1Hp")
+                val player2Hp = json.getInt("player2Hp")
+                val turn = json.getString("turn")
+                val damage = json.getInt("damage")
                 val battleOver = json.getBoolean("battleOver")
                 val winner = if (json.isNull("winner")) null else json.getString("winner")
+
+                val myHp = if (player == "player1") player1Hp else player2Hp
+                val enemyHp = if (player == "player1") player2Hp else player1Hp
+
                 runOnUiThread {
+                    currentPvpPlayerHpText?.text = "Your HP: $myHp"
+                    currentPvpEnemyHpText?.text = "Enemy HP: $enemyHp"
+                    currentPvpTurnText?.text = "Turn: $turn"
+                    currentPvpStatusText?.text = "Status: You dealt $damage damage"
+
                     if (battleOver) {
-                        showPvpBattleFinished(playerHp, enemyHp, winner)
-                    } else {
-                        showPvpMoveResult(playerHp, enemyHp, playerDamage, enemyDamage, turnString)
+                        showOnlinePvpBattleFinished(myHp, enemyHp, winner)
+                    }else {
+                        fetchPvpGameState()
                     }
                 }
             } catch (e: Exception) {
@@ -212,39 +310,26 @@ class MainActivity : AppCompatActivity() {
             }
         }.start()
     }
+    private fun showOnlinePvpBattleFinished(myHp: Int, enemyHp: Int, winner: String?) {
+        val player = currentPvpPlayer
 
-    private fun showPvpMoveResult(playerHp: Int, enemyHp: Int, playerDamage: Int, enemyDamage: Int, turn: String) {
-        val layout = screenLayout()
-        layout.addView(title("PvP Move Result"))
-        layout.addView(stat("Player HP", playerHp.toString()))
-        layout.addView(stat("Enemy HP", enemyHp.toString()))
-        layout.addView(stat("You dealt", playerDamage.toString()))
-        layout.addView(stat("Enemy dealt", enemyDamage.toString()))
-        layout.addView(stat("Next turn", turn))
-        layout.addView(spacer(16))
-        layout.addView(button("Make Another PvP Move") { makePvpMove() })
-        layout.addView(button("Back to Lobby") { showLobby() })
-        setScreen(layout)
-    }
-    private fun showPvpBattleFinished(playerHp: Int, enemyHp: Int, winner: String?) {
-        val layout = screenLayout()
-        layout.addView(title("PvP Battle Finished"))
-
-        val resultText = when (winner) {
-            "player" -> "You won!"
-            "enemy" -> "You lost!"
-            else -> "Battle ended"
+        val resultText = when {
+            winner == null -> "Battle ended"
+            winner == player -> "You won!"
+            else -> "You lost!"
         }
 
+        val layout = screenLayout()
+        layout.addView(title("Online PvP Finished"))
         layout.addView(subtitle(resultText))
         layout.addView(spacer(12))
-        layout.addView(stat("Player HP", playerHp.toString()))
+        layout.addView(stat("Your HP", myHp.toString()))
         layout.addView(stat("Enemy HP", enemyHp.toString()))
         layout.addView(spacer(16))
         layout.addView(button("Back to Lobby") { showLobby() })
-
         setScreen(layout)
     }
+
     private fun startBattle() {
         val container = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#121220"))

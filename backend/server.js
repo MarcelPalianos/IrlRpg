@@ -68,6 +68,8 @@ app.get('/game-state/:gameId', (req, res) => {
 
 // make move
 app.post('/make-move', (req, res) => {
+  console.log('MAKE MOVE BODY:', req.body);
+  console.log('MOVE DATA:', req.body.move);
   const { gameId, player } = req.body;
   const game = games[gameId];
 
@@ -94,7 +96,29 @@ app.post('/make-move', (req, res) => {
   const attacker = player;
   const defender = player === 'player1' ? 'player2' : 'player1';
 
-  const damage = Math.floor(Math.random() * 20) + 5;
+const move = req.body.move || {};
+
+const matches = move.matches ?? 3;
+const cascade = move.cascade ?? 1;
+
+// basic formula
+let damage = matches * 5;
+
+// bonus for cascades
+damage += (cascade - 1) * 3;
+
+// small bonus for multiple colors (future-proof)
+const colors = move.colors ?? [];
+damage += colors.length * 2;
+
+console.log('CALCULATED DAMAGE:', {
+  player,
+  matches,
+  cascade,
+  colors,
+  damage
+});
+
   game[defender].hp -= damage;
   if (game[defender].hp < 0) game[defender].hp = 0;
 
